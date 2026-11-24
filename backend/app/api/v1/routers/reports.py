@@ -8,7 +8,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.audit import ActivityLog
 from app.models.organization import Organization
-from app.core.deps import get_current_user, get_optional_user, require_roles
+from app.core.deps import get_optional_user
 from app.services.reporting import generate_inventory_csv, generate_finance_csv
 from app.services.pdf import generate_combined_pdf
 

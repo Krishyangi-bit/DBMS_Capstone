@@ -3,7 +3,7 @@ from decimal import Decimal
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.finance import Purchase, Donation, Expense
+from app.models.finance import Purchase, Donation, CashDonation, InKindDonation, Expense
 from app.models.inventory import InventoryItem
 from app.models.audit import ActivityLog
 from app.schemas.finance import PurchaseCreate, DonationCreate, ExpenseCreate, FinanceSummary
@@ -97,14 +97,19 @@ def create_donation_record(
       - If cash donation, updates financial records
       - Logs audit entry
     """
+    import uuid
+    receipt_no = (data.receipt_no or "").strip()
+    if not receipt_no:
+        receipt_no = f"DON-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
+
     existing = db.query(Donation).filter(
         Donation.org_id == org_id,
-        Donation.receipt_no == data.receipt_no.strip()
+        Donation.receipt_no == receipt_no
     ).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Donation receipt number '{data.receipt_no}' already exists in this organization."
+            detail=f"Donation receipt number '{receipt_no}' already exists in this organization."
         )
 
     d_type = data.donation_type.lower().strip()
@@ -130,6 +135,71 @@ def create_donation_record(
                 detail="Item not found for goods donation."
             )
 
+    # ------------------------------------------------------------------
+    # EER disjoint specialization (Pillar 1.1): build exactly one subclass row.
+    # The superclass stores the shared attributes; the subclass stores the
+    # attributes that only exist for that kind of donation.
+    # ------------------------------------------------------------------
+    cash_attributes = None
+    in_kind_attributes = None
+    declared_value = data.declared_value
+
+    if d_type == "cash":
+        payment_mode = (data.payment_mode or "NEFT").upper().strip()
+        allowed_modes = {"NEFT", "RTGS", "CHEQUE", "UPI", "CARD", "CASH"}
+        if payment_mode not in allowed_modes:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid payment_mode '{data.payment_mode}'. Allowed: {', '.join(sorted(allowed_modes))}"
+            )
+
+        if data.transaction_reference:
+            duplicate_ref = db.query(CashDonation).filter(
+                CashDonation.transaction_reference == data.transaction_reference.strip()
+            ).first()
+            if duplicate_ref:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Transaction reference '{data.transaction_reference}' already exists."
+                )
+
+        cash_attributes = {
+            "payment_mode": payment_mode,
+            "transaction_reference": data.transaction_reference.strip() if data.transaction_reference else None,
+            "bank_name": data.bank_name.strip() if data.bank_name else None,
+            "is_tax_exempt_80g": True if data.is_tax_exempt_80g is None else bool(data.is_tax_exempt_80g),
+        }
+    else:
+        storage_requirement = (data.storage_requirement or "AMBIENT").upper().strip()
+        condition_grade = (data.condition_grade or "NEW").upper().strip()
+        allowed_storage = {"COLD", "AMBIENT", "DRY"}
+        allowed_grade = {"NEW", "REFURBISHED", "USED"}
+        if storage_requirement not in allowed_storage:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid storage_requirement '{data.storage_requirement}'. Allowed: {', '.join(sorted(allowed_storage))}"
+            )
+        if condition_grade not in allowed_grade:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid condition_grade '{data.condition_grade}'. Allowed: {', '.join(sorted(allowed_grade))}"
+            )
+
+        unit_fair_value = (
+            data.unit_fair_value if data.unit_fair_value is not None else (item.unit_cost or Decimal("0.00"))
+        )
+        # Derive the superclass declared value from the subclass fair valuation
+        if declared_value <= 0 and unit_fair_value and data.quantity:
+            declared_value = (Decimal(str(data.quantity)) * Decimal(str(unit_fair_value))).quantize(Decimal("0.01"))
+
+        in_kind_attributes = {
+            "item_id": data.item_id,
+            "quantity_donated": data.quantity,
+            "unit_fair_value": unit_fair_value,
+            "storage_requirement": storage_requirement,
+            "condition_grade": condition_grade,
+        }
+
     donation = Donation(
         org_id=org_id,
         donor_name=data.donor_name.strip(),
@@ -137,14 +207,19 @@ def create_donation_record(
         amount=data.amount if d_type == "cash" else Decimal("0.00"),
         item_id=data.item_id if d_type == "goods" else None,
         quantity=data.quantity if d_type == "goods" else None,
-        declared_value=data.declared_value,
+        declared_value=declared_value,
         purpose=data.purpose.strip() if data.purpose else None,
-        receipt_no=data.receipt_no.strip(),
+        receipt_no=receipt_no,
         donation_date=data.donation_date or datetime.now(timezone.utc).date(),
         recorded_by=user_id
     )
     db.add(donation)
     db.flush()
+
+    if cash_attributes:
+        db.add(CashDonation(donation_id=donation.id, **cash_attributes))
+    if in_kind_attributes:
+        db.add(InKindDonation(donation_id=donation.id, **in_kind_attributes))
 
     if d_type == "goods":
         record_movement(
@@ -154,7 +229,7 @@ def create_donation_record(
             movement_type="RESTOCK",
             quantity=data.quantity,
             actor_user_id=user_id,
-            note=f"In-kind goods donation from {data.donor_name} (Receipt #{data.receipt_no})",
+            note=f"In-kind goods donation from {data.donor_name} (Receipt #{receipt_no})",
             reference_type="donation",
             reference_id=donation.id,
             ip_address=ip_address

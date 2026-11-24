@@ -19,4 +19,5 @@ class Organization(Base):
     purchases = relationship("Purchase", back_populates="organization", cascade="all, delete-orphan")
     donations = relationship("Donation", back_populates="organization", cascade="all, delete-orphan")
     expenses = relationship("Expense", back_populates="organization", cascade="all, delete-orphan")
+    warehouses = relationship("Warehouse", back_populates="organization", cascade="all, delete-orphan")
     activity_logs = relationship("ActivityLog", back_populates="organization", cascade="all, delete-orphan")

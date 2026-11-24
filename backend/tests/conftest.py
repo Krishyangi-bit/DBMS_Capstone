@@ -1,3 +1,8 @@
+import os
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("ENVIRONMENT", "testing")
+os.environ.setdefault("JWT_SECRET", "secure-test-jwt-secret-key-32-chars-long")
+
 import pytest
 from decimal import Decimal
 from fastapi.testclient import TestClient
@@ -25,6 +30,8 @@ engine = create_engine(
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+DEMO_PW_HASH = get_password_hash("Demo@12345")
+
 
 @pytest.fixture(scope="function")
 def db_session():
@@ -38,11 +45,10 @@ def db_session():
     session.commit()
 
     # Seed baseline users
-    pw_hash = get_password_hash("Demo@12345")
-    admin_user = User(id=1, org_id=1, email="admin@asha.org", full_name="Asha Admin", password_hash=pw_hash, role="admin", is_active=True)
-    manager_user = User(id=2, org_id=1, email="manager@asha.org", full_name="Asha Manager", password_hash=pw_hash, role="manager", is_active=True)
-    volunteer_user = User(id=3, org_id=1, email="volunteer@asha.org", full_name="Asha Volunteer", password_hash=pw_hash, role="volunteer", is_active=True)
-    retail_admin = User(id=4, org_id=2, email="owner@sunrise.store", full_name="Store Owner", password_hash=pw_hash, role="admin", is_active=True)
+    admin_user = User(id=1, org_id=1, email="admin@asha.org", full_name="Asha Admin", password_hash=DEMO_PW_HASH, role="admin", is_active=True)
+    manager_user = User(id=2, org_id=1, email="manager@asha.org", full_name="Asha Manager", password_hash=DEMO_PW_HASH, role="manager", is_active=True)
+    volunteer_user = User(id=3, org_id=1, email="volunteer@asha.org", full_name="Asha Volunteer", password_hash=DEMO_PW_HASH, role="volunteer", is_active=True)
+    retail_admin = User(id=4, org_id=2, email="owner@sunrise.store", full_name="Store Owner", password_hash=DEMO_PW_HASH, role="admin", is_active=True)
 
     session.add_all([admin_user, manager_user, volunteer_user, retail_admin])
     session.commit()

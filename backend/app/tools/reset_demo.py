@@ -1,4 +1,4 @@
-from app.database import SessionLocal, engine
+from app.database import SessionLocal
 from app.models import (
     ActivityLog, Expense, Donation, Purchase,
     StockMovement, InventoryItem, User, Organization
