@@ -132,10 +132,14 @@ export default function FinancePage({ showToast = () => {} }) {
     try {
       setModalSubmitting(true);
       setModalError("");
+      const donAmt = parseFloat(donationAmount);
       await api.finance.createDonation({
         donor_name: donorName.trim() || "Anonymous Contributor",
         donation_type: donationType,
-        amount: parseFloat(donationAmount),
+        amount: donAmt,
+        declared_value: donAmt,
+        receipt_no: `REC-${Date.now().toString(36).toUpperCase()}`,
+        payment_mode: "NEFT",
         donor_pan: donorPan.trim() || undefined,
         notes: `Recorded via Finance Console by ${user?.full_name || "Staff"}`,
       });

@@ -301,6 +301,52 @@ export const api = {
     },
   },
 
+  // Database-native analytics (Pillars 2-4)
+  analytics: {
+    async getInventoryHealth(orgType = "ngo") {
+      return request(`/analytics/inventory-health?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getStockVelocity(orgType = "ngo", limit = 100) {
+      return request(`/analytics/stock-velocity?org_type=${encodeURIComponent(orgType)}&limit=${limit}`);
+    },
+
+    async getCategoryVelocity(orgType = "ngo") {
+      return request(`/analytics/category-velocity?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getCashFlow(orgType = "ngo") {
+      return request(`/analytics/cash-flow?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getDeadStock(orgType = "ngo") {
+      return request(`/analytics/dead-stock?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getPnl(orgType = "ngo") {
+      return request(`/analytics/pnl?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getWarehouses(orgType = "ngo") {
+      return request(`/analytics/warehouses?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getDonationSpecialization(orgType = "ngo") {
+      return request(`/analytics/donation-specialization?org_type=${encodeURIComponent(orgType)}`);
+    },
+
+    async getDbPrograms() {
+      return request("/analytics/db-programs");
+    },
+
+    async dispatchAid(payload) {
+      return request("/analytics/dispatch-aid", {
+        method: "POST",
+        body: payload,
+      });
+    },
+  },
+
   // Team & Organization Users
   users: {
     async listTeam(orgType = "ngo") {

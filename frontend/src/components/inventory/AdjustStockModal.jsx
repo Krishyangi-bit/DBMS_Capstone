@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, RefreshCw, HeartHandshake, Store } from "lucide-react";
 import Button from "../ui/Button";
@@ -18,16 +18,17 @@ export default function AdjustStockModal({
   const [note, setNote] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [prevKey, setPrevKey] = useState(null);
 
-  useEffect(() => {
-    if (isOpen && item) {
-      setAdjustmentType(defaultAction);
-      setQuantity(1);
-      setNote("");
-      setError("");
-      setLoading(false);
-    }
-  }, [isOpen, item, defaultAction]);
+  const currentKey = isOpen && item ? `${item.id}-${defaultAction}` : null;
+  if (currentKey && currentKey !== prevKey) {
+    setPrevKey(currentKey);
+    setAdjustmentType(defaultAction);
+    setQuantity(1);
+    setNote("");
+    setError("");
+    setLoading(false);
+  }
 
   if (!isOpen || !item) return null;
 
