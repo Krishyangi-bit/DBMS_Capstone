@@ -15,6 +15,22 @@ from app.services.finance import create_donation_record
 router = APIRouter(prefix="/donations", tags=["Donations"])
 
 
+def project_specialization(donation: Donation, out: DonationOut) -> DonationOut:
+    """Flatten the EER subclass row into the API projection (Pillar 1.1)."""
+    if donation.donation_type == "cash" and donation.cash_detail:
+        detail = donation.cash_detail
+        out.payment_mode = detail.payment_mode
+        out.transaction_reference = detail.transaction_reference
+        out.bank_name = detail.bank_name
+        out.is_tax_exempt_80g = detail.is_tax_exempt_80g
+    elif donation.donation_type == "goods" and donation.in_kind_detail:
+        detail = donation.in_kind_detail
+        out.storage_requirement = detail.storage_requirement
+        out.condition_grade = detail.condition_grade
+        out.unit_fair_value = detail.unit_fair_value
+    return out
+
+
 @router.get("", response_model=List[DonationOut])
 def list_donations(
     limit: int = Query(50, ge=1, le=200),
@@ -47,7 +63,7 @@ def list_donations(
         item = db.query(InventoryItem).filter(InventoryItem.id == d.item_id).first() if d.item_id else None
         out = DonationOut.model_validate(d)
         out.item_name = item.name if item else None
-        results.append(out)
+        results.append(project_specialization(d, out))
     return results
 
 
@@ -83,4 +99,4 @@ def create_donation(
     item = db.query(InventoryItem).filter(InventoryItem.id == donation.item_id).first() if donation.item_id else None
     res = DonationOut.model_validate(donation)
     res.item_name = item.name if item else None
-    return res
+    return project_specialization(donation, res)

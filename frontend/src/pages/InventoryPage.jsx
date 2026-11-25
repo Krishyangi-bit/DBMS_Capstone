@@ -45,9 +45,10 @@ export default function InventoryPage({
   const [personaModalOpen, setPersonaModalOpen] = useState(false);
   const [personaModalAction, setPersonaModalAction] = useState("");
 
-  const canManageStock = can(PERMISSIONS.RESTOCK_INVENTORY);
-  const canEditItem = can(PERMISSIONS.CREATE_INVENTORY);
-  const canDeleteItem = can(PERMISSIONS.MANAGE_TEAM);
+  const canManageStock = can(PERMISSIONS.RECORD_RESTOCK) || can(PERMISSIONS.RECORD_RELIEF) || can(PERMISSIONS.RECORD_SALE);
+  const canAddItem = can(PERMISSIONS.CREATE_ITEM);
+  const canEditItem = can(PERMISSIONS.EDIT_ITEM);
+  const canDeleteItem = can(PERMISSIONS.ARCHIVE_ITEM) || can(PERMISSIONS.MANAGE_TEAM);
 
   const categories = useMemo(() => {
     const cats = new Set(inventory.map((i) => i.category));
@@ -114,7 +115,7 @@ export default function InventoryPage({
             <span>Export CSV</span>
           </Button>
 
-          {canManageStock ? (
+          {canAddItem ? (
             <Button
               variant="primary"
               size="sm"

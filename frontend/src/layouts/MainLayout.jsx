@@ -1,4 +1,3 @@
-import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import Topbar from "../components/layout/Topbar";
 import Toast from "../components/ui/Toast";
@@ -8,7 +7,6 @@ import EditItemModal from "../components/inventory/EditItemModal";
 import DeleteItemModal from "../components/inventory/DeleteItemModal";
 import AboutModal from "../components/AboutModal";
 import {
-  TrendingUp,
   Package,
   History,
   HeartHandshake,

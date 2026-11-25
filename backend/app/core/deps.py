@@ -1,6 +1,6 @@
 from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -8,17 +8,24 @@ from app.models import User
 from app.core.security import decode_access_token
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+# HTTPBearer gives Swagger a simple "Value" paste box for the token
+http_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 def get_token_from_request(
     request: Request,
-    bearer_token: Optional[str] = Depends(oauth2_scheme)
+    bearer_token: Optional[str] = Depends(oauth2_scheme),
+    http_creds: Optional[HTTPAuthorizationCredentials] = Depends(http_bearer_scheme),
 ) -> Optional[str]:
-    # 1. Check Authorization: Bearer header first if explicitly provided
+    # 1. HTTPBearer (Swagger "Authorize" value box) takes priority
+    if http_creds and http_creds.credentials:
+        return http_creds.credentials
+
+    # 2. OAuth2PasswordBearer header
     if bearer_token:
         return bearer_token
 
-    # 2. Fall back to httpOnly cookie 'ro_session'
+    # 3. Fall back to httpOnly cookie 'ro_session'
     cookie_token = request.cookies.get("ro_session")
     if cookie_token:
         return cookie_token

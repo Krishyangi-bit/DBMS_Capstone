@@ -1,12 +1,26 @@
 from datetime import datetime, date, timedelta, timezone
 from decimal import Decimal
 from sqlalchemy.orm import Session
-from app.database import SessionLocal, Base, engine
+from app.database import SessionLocal
 from app.core.security import get_password_hash
 from app.models import (
     Organization, User, InventoryItem, StockMovement,
-    Purchase, Donation, Expense, ActivityLog
+    Purchase, Donation, CashDonation, InKindDonation, Expense, ActivityLog,
+    Warehouse, WarehouseStock
 )
+
+
+# Pillar 1.2 — facilities used by the EER aggregation demo
+WAREHOUSE_BLUEPRINTS = {
+    "ngo": [
+        ("WH-NORTH", "Noida Relief Warehouse", "Noida", 24000),
+        ("WH-WEST", "Gurugram Transit Depot", "Gurugram", 12000),
+    ],
+    "retail": [
+        ("WH-MAIN", "Sunrise Main Store", "Gurgaon", 9000),
+        ("WH-BACK", "Sunrise Backroom Reserve", "Gurgaon", 3500),
+    ],
+}
 
 
 def seed_database(db: Session = None):
@@ -20,6 +34,9 @@ def seed_database(db: Session = None):
         existing_org = db.query(Organization).first()
         if existing_org:
             print("Database already contains data. Seed skipped (idempotent).")
+            # Capstone extensions are topped up independently so an existing
+            # prototype database still demonstrates Pillar 1.
+            _seed_capstone_extensions(db)
             return
 
         print("Seeding organizations and demo users...")
@@ -205,6 +222,24 @@ def seed_database(db: Session = None):
         # delta = total movements = item.quantity_on_hand
         for item in asha_items:
             final_qty = item.quantity_on_hand
+            # Pillar 3.4 — Dead stock demo: SAN-PADS-030 held as strategic buffer stock
+            # with intake 75 days ago and zero movements within the 60-day cutoff window.
+            if item.sku == "SAN-PADS-030":
+                m_reserve = StockMovement(
+                    org_id=org_asha.id,
+                    item_id=item.id,
+                    movement_type="RESTOCK",
+                    quantity_delta=final_qty,
+                    unit_value=item.unit_cost,
+                    total_value=final_qty * item.unit_cost,
+                    reference_type="purchase",
+                    note="Strategic humanitarian reserve batch intake",
+                    actor_user_id=manager_asha.id,
+                    created_at=now - timedelta(days=75),
+                )
+                db.add(m_reserve)
+                continue
+
             # Simulate initial intake (final_qty + 10) and relief distribution (10)
             intake_qty = final_qty + Decimal("10.00")
             outflow_qty = Decimal("10.00")
@@ -237,6 +272,24 @@ def seed_database(db: Session = None):
 
         for item in sunrise_items:
             final_qty = item.quantity_on_hand
+            # Pillar 3.4 — Dead stock demo: RET-SLT-001 held as bulk buffer stock
+            # with intake 75 days ago and zero movements within the 60-day cutoff window.
+            if item.sku == "RET-SLT-001":
+                m_reserve = StockMovement(
+                    org_id=org_sunrise.id,
+                    item_id=item.id,
+                    movement_type="RESTOCK",
+                    quantity_delta=final_qty,
+                    unit_value=item.unit_cost,
+                    total_value=final_qty * item.unit_cost,
+                    reference_type="purchase",
+                    note="Bulk warehouse buffer stock intake",
+                    actor_user_id=owner_sunrise.id,
+                    created_at=now - timedelta(days=75),
+                )
+                db.add(m_reserve)
+                continue
+
             intake_qty = final_qty + Decimal("15.00")
             outflow_qty = Decimal("15.00")
 
@@ -484,6 +537,7 @@ def seed_database(db: Session = None):
         db.add_all(logs)
 
         db.commit()
+        _seed_capstone_extensions(db)
         print("Database successfully seeded with realistic multi-tenant demo data!")
     except Exception as e:
         db.rollback()
@@ -492,6 +546,133 @@ def seed_database(db: Session = None):
     finally:
         if close_db:
             db.close()
+
+
+def _seed_capstone_extensions(db: Session) -> None:
+    """Idempotently populate the EER aggregation + specialization tables.
+
+    Safe to call on an already-seeded prototype database: it only inserts rows that
+    do not exist yet, and it never touches `inventory_items.quantity_on_hand`.
+    """
+    now = datetime.now(timezone.utc)
+    created_warehouses = 0
+    created_stock_rows = 0
+    created_subclasses = 0
+
+    for org in db.query(Organization).all():
+        org_type = (org.org_type or "ngo").lower()
+        blueprints = WAREHOUSE_BLUEPRINTS.get(org_type, WAREHOUSE_BLUEPRINTS["ngo"])
+
+        warehouses = (
+            db.query(Warehouse)
+            .filter(Warehouse.org_id == org.id)
+            .order_by(Warehouse.warehouse_code)
+            .all()
+        )
+        if not warehouses:
+            for code, name, city, capacity in blueprints:
+                warehouse = Warehouse(
+                    org_id=org.id,
+                    warehouse_code=code,
+                    name=name,
+                    city=city,
+                    capacity_sqft=capacity,
+                    is_active=True,
+                    created_at=now,
+                )
+                db.add(warehouse)
+                warehouses.append(warehouse)
+                created_warehouses += 1
+            db.flush()
+
+        # Aggregation entity: split each item's balance across the facilities so
+        # SUM(warehouse_stock.quantity_stored) reconciles with quantity_on_hand.
+        items = (
+            db.query(InventoryItem)
+            .filter(InventoryItem.org_id == org.id, InventoryItem.is_archived == False)
+            .order_by(InventoryItem.id)
+            .all()
+        )
+        if warehouses and items:
+            facilities = len(warehouses)
+            for idx, item in enumerate(items):
+                already_placed = (
+                    db.query(WarehouseStock)
+                    .filter(WarehouseStock.item_id == item.id)
+                    .count()
+                )
+                if already_placed:
+                    continue
+
+                total = Decimal(str(item.quantity_on_hand or 0))
+                if total <= Decimal("0.00") or not facilities:
+                    shares = [Decimal("0.00")] * facilities
+                else:
+                    base = (total / facilities).quantize(Decimal("0.01"), rounding="ROUND_DOWN")
+                    remainder = total - (base * facilities)
+                    shares = [base] * facilities
+                    cents = int((remainder * 100).to_integral_value())
+                    for c in range(cents):
+                        shares[c % facilities] += Decimal("0.01")
+
+                for wh, qty in zip(warehouses, shares):
+                    db.add(
+                        WarehouseStock(
+                            warehouse_id=wh.id,
+                            item_id=item.id,
+                            quantity_stored=qty,
+                            bin_location=f"AISLE-{(idx % 4) + 1}-SHELF-{chr(65 + idx % 6)}",
+                            last_counted_at=now,
+                        )
+                    )
+                    created_stock_rows += 1
+
+        # Specialization entity: guarantee total participation (d, t) for legacy rows.
+        for donation in db.query(Donation).filter(Donation.org_id == org.id).all():
+            if donation.donation_type == "cash":
+                if not db.get(CashDonation, donation.id):
+                    db.add(
+                        CashDonation(
+                            donation_id=donation.id,
+                            payment_mode="NEFT",
+                            transaction_reference=f"TXN-{org.id}-{donation.id:05d}",
+                            bank_name="HDFC Bank",
+                            is_tax_exempt_80g=True,
+                        )
+                    )
+                    created_subclasses += 1
+            elif donation.donation_type == "goods" and donation.item_id:
+                if not db.get(InKindDonation, donation.id):
+                    item = db.get(InventoryItem, donation.item_id)
+                    qty = donation.quantity or Decimal("1.00")
+                    if item and item.unit_cost:
+                        unit_fair_value = Decimal(str(item.unit_cost))
+                    elif donation.declared_value and qty:
+                        unit_fair_value = (
+                            Decimal(str(donation.declared_value)) / Decimal(str(qty))
+                        ).quantize(Decimal("0.01"))
+                    else:
+                        unit_fair_value = Decimal("0.00")
+
+                    db.add(
+                        InKindDonation(
+                            donation_id=donation.id,
+                            item_id=donation.item_id,
+                            quantity_donated=qty,
+                            unit_fair_value=unit_fair_value,
+                            storage_requirement="AMBIENT",
+                            condition_grade="NEW",
+                        )
+                    )
+                    created_subclasses += 1
+
+    db.commit()
+    if created_warehouses or created_stock_rows or created_subclasses:
+        print(
+            "Capstone EER extensions seeded "
+            f"({created_warehouses} warehouses, {created_stock_rows} warehouse_stock rows, "
+            f"{created_subclasses} donation subclass rows)."
+        )
 
 
 if __name__ == "__main__":

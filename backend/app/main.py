@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.database import Base, engine, get_db
 from app.models import InventoryItem, User, ActivityLog, Organization
 from app.core.config import settings
+from app.core.deps import get_optional_user
 from app.api.v1.router import api_v1_router
 from app.schemas import (
     ItemCreate, ItemUpdate, ItemOut, StockAdjustRequest,
@@ -77,6 +78,7 @@ def get_users(db: Session = Depends(get_db)):
 
 
 @app.get("/api/inventory", response_model=List[ItemOut], tags=["Inventory"])
+@app.get("/api/v1/inventory", response_model=List[ItemOut], tags=["Inventory"])
 def list_inventory(
     search: Optional[str] = None,
     category: Optional[str] = None,
@@ -105,12 +107,14 @@ def list_inventory(
 
 
 @app.get("/api/inventory/low-stock", response_model=List[ItemOut], tags=["Inventory"])
+@app.get("/api/v1/inventory/low-stock", response_model=List[ItemOut], tags=["Inventory"])
 def get_low_stock_items(db: Session = Depends(get_db)):
     items = db.query(InventoryItem).filter(InventoryItem.is_archived == False).all()
     return [i for i in items if i.calculate_status() in ["low", "out_of_stock"]]
 
 
 @app.get("/api/inventory/{item_id}", response_model=ItemOut, tags=["Inventory"])
+@app.get("/api/v1/inventory/{item_id}", response_model=ItemOut, tags=["Inventory"])
 def get_item(item_id: int, db: Session = Depends(get_db)):
     item = db.query(InventoryItem).filter(InventoryItem.id == item_id).first()
     if not item:
@@ -119,13 +123,22 @@ def get_item(item_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/inventory", response_model=ItemOut, status_code=status.HTTP_201_CREATED, tags=["Inventory"])
-def create_item(payload: ItemCreate, db: Session = Depends(get_db)):
-    org = db.query(Organization).first()
-    org_id = org.id if org else 1
+@app.post("/api/v1/inventory", response_model=ItemOut, status_code=status.HTTP_201_CREATED, tags=["Inventory"])
+def create_item(
+    payload: ItemCreate,
+    current_user: Optional[User] = Depends(get_optional_user),
+    db: Session = Depends(get_db)
+):
+    if current_user and current_user.org_id:
+        org_id = current_user.org_id
+    else:
+        org = db.query(Organization).first()
+        org_id = org.id if org else 1
 
+    sku_clean = payload.sku.strip().upper()
     existing = db.query(InventoryItem).filter(
         InventoryItem.org_id == org_id,
-        InventoryItem.sku == payload.sku.strip().upper()
+        InventoryItem.sku == sku_clean
     ).first()
     if existing:
         raise HTTPException(status_code=400, detail=f"SKU '{payload.sku}' already exists.")
@@ -133,7 +146,7 @@ def create_item(payload: ItemCreate, db: Session = Depends(get_db)):
     item = InventoryItem(
         org_id=org_id,
         name=payload.name.strip(),
-        sku=payload.sku.strip().upper(),
+        sku=sku_clean,
         category=payload.category,
         unit=payload.unit,
         quantity_on_hand=payload.quantity_on_hand,
@@ -147,6 +160,7 @@ def create_item(payload: ItemCreate, db: Session = Depends(get_db)):
 
     log = ActivityLog(
         org_id=org_id,
+        actor_user_id=current_user.id if current_user else None,
         action="create",
         entity_type="inventory_item",
         entity_id=item.id,
@@ -161,6 +175,7 @@ def create_item(payload: ItemCreate, db: Session = Depends(get_db)):
 
 
 @app.put("/api/inventory/{item_id}", response_model=ItemOut, tags=["Inventory"])
+@app.put("/api/v1/inventory/{item_id}", response_model=ItemOut, tags=["Inventory"])
 def update_item(item_id: int, payload: ItemUpdate, db: Session = Depends(get_db)):
     item = db.query(InventoryItem).filter(InventoryItem.id == item_id).first()
     if not item:

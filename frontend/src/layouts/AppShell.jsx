@@ -20,6 +20,7 @@ import {
   HeartHandshake,
   ChevronDown,
   Boxes,
+  Database,
   UserRound
 } from "lucide-react";
 import Badge from "../components/ui/Badge";
@@ -58,6 +59,12 @@ export default function AppShell({ children, toast, closeToast }) {
       alias: [],
       label: "Finance",
       icon: Coins,
+    },
+    {
+      path: "/analytics",
+      alias: [],
+      label: "Analytics",
+      icon: Database,
     },
     {
       path: "/audit",

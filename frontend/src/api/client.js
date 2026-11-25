@@ -98,7 +98,10 @@ export async function getInventory(params = {}) {
   if (params.status && params.status !== "All") query.set("status", params.status);
 
   try {
-    const res = await fetch(`${API_BASE}/inventory?${query.toString()}`, { signal: AbortSignal.timeout(3000) });
+    const res = await fetch(`${API_BASE}/inventory?${query.toString()}`, {
+      credentials: "include",
+      signal: AbortSignal.timeout(3000),
+    });
     if (res.ok) {
       backendActive = true;
       const data = await res.json();
@@ -131,6 +134,7 @@ export async function createItem(itemData) {
     const res = await fetch(`${API_BASE}/inventory`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(itemData),
       signal: AbortSignal.timeout(3000)
     });
@@ -179,19 +183,34 @@ export async function adjustStock(
     throw new Error("Invalid stock movement type.");
   }
 
-  const response = await fetch(
-    `${API_BASE}/v1/items/${itemId}/movements`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        movement_type: type,
-        quantity: Number(quantity),
-        note: note || ""
-      }),
-      signal: AbortSignal.timeout(5000)
-    }
-  );
+  // Relief dispatches go through the capstone endpoint, which executes the
+  // MySQL stored procedure `sp_dispatch_relief_aid` (pessimistic lock + savepoint)
+  // when the database supports it and falls back to the Python service otherwise.
+  const endpoint =
+    type === "RELIEF"
+      ? `${API_BASE}/v1/analytics/dispatch-aid`
+      : `${API_BASE}/v1/items/${itemId}/movements`;
+
+  const payload =
+    type === "RELIEF"
+      ? {
+          item_id: Number(itemId),
+          quantity: Number(quantity),
+          destination: note || "Aid Handover",
+        }
+      : {
+          movement_type: type,
+          quantity: Number(quantity),
+          note: note || "",
+        };
+
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    credentials: "include",
+    signal: AbortSignal.timeout(5000),
+  });
 
   const data = await response.json().catch(() => ({}));
 
@@ -209,6 +228,15 @@ export async function adjustStock(
   }
 
   backendActive = true;
+  if (type === "RELIEF") {
+    return {
+      ...data,
+      name: data.item_name || data.name,
+      quantity: data.remaining_stock,
+      movement_type: "RELIEF",
+      quantity_delta: -Number(quantity),
+    };
+  }
   return data;
 }
 
@@ -258,6 +286,7 @@ export async function updateItem(itemId, itemData) {
     const res = await fetch(`${API_BASE}/inventory/${itemId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
+      credentials: "include",
       body: JSON.stringify(itemData),
       signal: AbortSignal.timeout(3000)
     });
@@ -271,7 +300,7 @@ export async function updateItem(itemId, itemData) {
     if (backendActive) throw error;
     // Local fallback
     const index = localInventory.findIndex(i => i.id === itemId);
-    if (index === -1) throw new Error("Item not found");
+    if (index === -1) throw new Error("Item not found", { cause: error });
     localInventory[index] = {
       ...localInventory[index],
       ...itemData,
@@ -310,7 +339,7 @@ export async function deleteItem(itemId) {
     if (backendActive) throw error;
     // Local fallback
     const item = localInventory.find(i => i.id === itemId);
-    if (!item) throw new Error("Item not found");
+    if (!item) throw new Error("Item not found", { cause: error });
     localInventory = localInventory.filter(i => i.id !== itemId);
     localLogs.unshift({
       id: Date.now(),

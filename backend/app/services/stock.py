@@ -7,6 +7,7 @@ from app.models.inventory import InventoryItem
 from app.models.movement import StockMovement
 from app.models.organization import Organization
 from app.models.audit import ActivityLog
+from app.services.db_programs import native_movement_triggers_active
 
 
 def record_movement(
@@ -112,7 +113,12 @@ def record_movement(
             detail=f"Cannot reduce stock below zero. Current: {item.quantity_on_hand}, Requested delta: {qty_delta}"
         )
 
-    item.quantity_on_hand = new_stock
+    # Capstone handshake: when trg_after_stock_movement_insert is installed the
+    # engine owns both the on-hand balance and the audit trail. Applying them here
+    # as well would double-count every movement, so defer to the trigger.
+    native_triggers = native_movement_triggers_active()
+    if not native_triggers:
+        item.quantity_on_hand = new_stock
 
     movement = StockMovement(
         org_id=org_id,
@@ -129,20 +135,25 @@ def record_movement(
     db.add(movement)
     db.flush()
 
+    if native_triggers:
+        # The trigger already moved the balance; reload so later reads are correct.
+        db.refresh(item)
+
     summary_action = "Restocked" if qty_delta > 0 else "Dispatched"
     activity_summary = f"{summary_action} {quantity} {item.unit} of {item.name}"
     if note:
         activity_summary += f" ({note})"
 
-    activity = ActivityLog(
-        org_id=org_id,
-        actor_user_id=actor_user_id,
-        action="movement",
-        entity_type="stock_movement",
-        entity_id=movement.id,
-        summary=activity_summary,
-        ip_address=ip_address
-    )
-    db.add(activity)
+    if not native_triggers:
+        activity = ActivityLog(
+            org_id=org_id,
+            actor_user_id=actor_user_id,
+            action="movement",
+            entity_type="stock_movement",
+            entity_id=movement.id,
+            summary=activity_summary,
+            ip_address=ip_address
+        )
+        db.add(activity)
 
     return movement

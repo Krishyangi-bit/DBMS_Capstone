@@ -9,9 +9,10 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import Base
-from app.models import (
+from app.models import (  # noqa: F401
     Organization, User, InventoryItem, StockMovement,
-    Purchase, Donation, Expense, ActivityLog
+    Purchase, Donation, CashDonation, InKindDonation, Expense,
+    Warehouse, WarehouseStock, ActivityLog
 )
 from app.core.config import settings
 

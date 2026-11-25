@@ -40,8 +40,20 @@ class DonationCreate(BaseModel):
     quantity: Optional[Decimal] = Field(None, gt=0)
     declared_value: Decimal = Field(default=Decimal("0.00"), ge=0)
     purpose: Optional[str] = Field(None, max_length=255)
-    receipt_no: str = Field(..., min_length=2, max_length=100)
+    receipt_no: Optional[str] = Field(None, max_length=100)
     donation_date: Optional[date] = None
+
+    # --- EER specialization attributes (Pillar 1.1) ---
+    # cash_donations subclass
+    payment_mode: Optional[str] = Field(None, max_length=20, description="'NEFT', 'RTGS', 'CHEQUE', 'UPI', 'CARD', 'CASH'")
+    transaction_reference: Optional[str] = Field(None, max_length=100)
+    bank_name: Optional[str] = Field(None, max_length=100)
+    is_tax_exempt_80g: Optional[bool] = True
+
+    # in_kind_donations subclass
+    unit_fair_value: Optional[Decimal] = Field(None, ge=0)
+    storage_requirement: Optional[str] = Field(None, max_length=20, description="'COLD', 'AMBIENT', 'DRY'")
+    condition_grade: Optional[str] = Field(None, max_length=20, description="'NEW', 'REFURBISHED', 'USED'")
 
 
 class DonationOut(BaseModel):
@@ -59,6 +71,15 @@ class DonationOut(BaseModel):
     recorded_by: int
     created_at: datetime
     item_name: Optional[str] = None
+
+    # Projected from the specialization subclasses when present
+    payment_mode: Optional[str] = None
+    transaction_reference: Optional[str] = None
+    bank_name: Optional[str] = None
+    is_tax_exempt_80g: Optional[bool] = None
+    storage_requirement: Optional[str] = None
+    condition_grade: Optional[str] = None
+    unit_fair_value: Optional[Decimal] = None
 
     model_config = ConfigDict(from_attributes=True)
 
